@@ -1,0 +1,583 @@
+---
+title: "Predicting Customer Exit"
+author: DONGWOO(KEVIN) HEO
+output:
+  word_document: default
+  html_document: default
+  toc: yes
+  pdf_document: default
+date: "2022-12-11"
+---
+
+```{r setup, include=FALSE,  message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidymodels)
+library(tidyverse)
+library(magrittr)
+library(viridis)
+library(hrbrthemes)
+library(rules)
+library(baguette)
+library(vip)
+library(tinytex)
+library(dplyr)
+library(yaml)
+library(ranger)
+library(iterators)
+library(kknn)
+library(rpart.plot)
+```
+
+## Predicting Customer Exit from a Bank
+
+#### Introduction
+Recently, machine learning a field under artificial intelligence has seen its significance proliferate. Simply put, machine learning is the capacity of machines to learn without explicit programming. Computers are able to learn through identifying patterns on which they are trained on before they are deployed for business they have been created in.
+Machine learning has a variety of applications, including finance. The various inventions made in the finance field and advent of mobile banking has seen the finance industry embrace technology and making work easier for their clients. However, with an increase in banking institutions and a bad economy banks face problems of clients leaving the bank or decrease in credit value. Hence the need to increase and or maintain the clientele they have and prepare for changes. The unpredictability in client behavior is causing banks problems.
+When an individual is confirmed to be leaving the bank, they can try to come up with strategies to retain them there longer because they are unclear of whether they will stay.  These strategies include coming up with packages such as loans that can accommodate their various clients.  The purpose of this study was to come up with a model that could predict a customer’s exit.
+
+#### Obectives
+
+1.	Come up with a model that can predict whether a client is exiting the company and/or whether they are leaving.
+2.	Determine which are the principle factors that determine if a client is leaving or staying.
+3.	Find patterns and insights on the clients who are staying or leaving using the data provided.
+
+#### Research Questions
+
+1.	Which was the best performing model, what was its accuracy?
+2.	Do the genders follow different patterns in banking (for those exiting or staying)?
+3.	How is the credit score of the banks of the banking customers?
+
+### Import data
+The data was imported using tidyverse packages.
+```{r cars}
+df = read_csv("Churn_Modelling.csv")
+df %>% head()
+```
+
+The columns Rownumber, customer surname and and customer Id this columns are unique, they are therefore not necessary for finding patterns in modelling or in data analysis.
+
+```{r}
+df = df %>% select(-c(RowNumber, CustomerId, Surname))
+df
+```
+
+There are 10000 records eleven columns, the response variable is_exited. The purpose of this study is to come up with a model that can predict whether a client that exits a bank or not based on the factors provided. Before proceeding with the exploratory data analysis, the data was split into training and testing sets.
+
+### Data Types
+```{r, warning=FALSE}
+cols <- c("Gender", "HasCrCard", "IsActiveMember", "Exited", "Geography")
+df %<>% mutate_each_(funs(factor(.)),cols)
+str(df)
+```
+
+### Data Partitioning
+```{r}
+set.seed(42)
+df_split <- initial_split(df, prop = 0.7, strata = Exited)
+df_train <- training(df_split)
+df_test <- testing(df_split)
+
+
+val_set <- validation_split(df_train, strata = Exited, prop = 0.7)
+val_set
+
+nrow(df_train)
+```
+
+##### Significance of training and testing set(partitioning).
+
+The quality of machine learning models depends on the training set's data.
+Even the most effective machine learning algorithms will not function well in the absence of high-quality training data.
+Early on in the training process, it becomes clear that relevant, full, accurate, and high-quality data are required. Only with sufficient training data can the algorithm quickly identify the features and discover the links required for future prediction.
+More specifically, the most important factor in machine learning (and artificial intelligence) is high-quality training data. The proper data must be used to train machine learning (ML) algorithms, which will then be more accurate and productive.
+There are 6999 records in the training set and 3001 records in the testing set.
+
+The terms training dataset, learning set, and training set are also used to refer to training data. Every machine learning model needs it since it enables them to accomplish desired tasks or generate correct predictions.
+Simply simply, the machine learning model is built using training data. It demonstrates what the desired result should look like. The model repeatedly studies the dataset to fully comprehend its characteristics and to modify itself for enhanced performance.
+Model training uses training data, which is data that is utilized to fit the model. On the other hand, test data are employed to assess the effectiveness or correctness of the model. It's a sample of data that is used to objectively assess how well the final model fit the training data.
+A training dataset is a starting set of data that teaches ML models how to recognize specific patterns or carry out a specific task. To assess how successful the training was or how accurate the model is, a testing dataset is used.
+An ML algorithm is more likely to have high accuracy if it has been trained on a specific dataset and tested on that same dataset because the model is aware of what to anticipate. Everything will be fine if the training dataset includes every potential value that the model might meet in the future.
+However, it is never the case. There is no way that a training dataset could possibly cover everything that a model would face in the actual world. In order to assess the model's accuracy, a test dataset with obfuscated data points is employed.
+
+```{r}
+nrow(df_test)
+```
+## Exploratory Data Analysis
+
+```{r}
+ggplot(df_train, aes(x = Geography, fill = Gender)) +
+    geom_bar(position = "dodge")
+```
+
+Germany and Spain Branches have the same number of customers and France has the highest number of clients. In all the countries the number of men is slightly higher than women. Gender is a significant factor in determining the bank's performance. Men and women have different spending, saving and investing patterns. Therefore, the bank has to prepare different packages for each individual.Understanding the patterns according to gender are therefore crucial to the banks future planning.
+
+```{r}
+ggplot(df_train, aes(x = Exited, fill = Gender)) +
+    geom_bar(position = "dodge")
+```
+The proportion of males to females who exit is higher while those who do not exit, the proportion of females is higher.
+
+```{r}
+ggplot(df_train, aes(x = HasCrCard, fill = Gender)) +
+    geom_bar(position = "dodge")
+```
+Most customer do not have a credit card, and among those that do, males are more.
+
+```{r}
+ggplot(df_train, aes(CreditScore, fill = Gender)) +
+  geom_histogram(bins = 20)+ 
+  theme_light()
+```
+
+Most of the employees have a credit score thats between 550 and 750. This shows that the bank has a mixture of clients with poor credit to those who have good credit. Note that Men have a lower credit score than women. This could be attributed to men being providers therefore have a history of borrowing compared to women.
+
+From the plot below we note that creditscore for all countries has almost the same range. However, note that in Spain and Germany the credit score range for men is lower than females.
+
+```{r}
+ggplot(df_train, aes(CreditScore, Geography, fill = Gender)) +
+  geom_boxplot(alpha = 0.5, show.legend = TRUE)
+```
+
+The bank customers in Germany are have bank balances in their accounts compared to spain and France which suggests that the banks customers in Germany are more high profile than in the other countries. However, note that there are no differences when it comes to gender for both countries.
+
+```{r}
+ggplot(df_train, aes(Balance, Geography, fill = Gender)) +
+  geom_boxplot(alpha = 0.5, show.legend = FALSE)
+```
+
+```{r}
+ggplot(df_train, aes(fill=Geography, y=Balance, x=Geography)) + 
+    geom_bar(position="dodge", stat="identity") +
+    scale_fill_viridis(discrete = T, option = "E") +
+    ggtitle("Products Vs Balance For Countries") +
+    facet_wrap(~NumOfProducts) +
+    theme_light() +
+    theme(legend.position="none") +
+    xlab("")
+```
+### Summary Statistics,
+
+```{r}
+df_train %>% 
+  skimr::skim()
+```
+
+### Crossvalidations:
+Crossvalidation splits the training set into multiple sets which it trains on. The purpose of this dataset is to improve the model's perfomance on unseen data. In this study cross-validation was implemented using the vfold_cv function. The training set would be split into three sets on which the model will be trained on.
+
+This is a very fundamental and straightforward method in which we split our entire dataset into training data and testing data. We train the model using training data, and then we test it using testing data. The data is divided 70:30 because training data are often configured to be larger than testing data by a factor of two.
+In this method, the data is separated after being first randomly shuffled. Every time the model is trained, it can produce different results because it was trained on a different set of data points. This can lead to instability. Furthermore, we can never be certain that the train set we choose is an accurate representation of the entire dataset.
+
+One strategy to enhance the holdout method is K-fold cross validation. This approach ensures that our model's score is independent of how we chose the train and test sets. The holdout approach is done k times after dividing the data set into k sections. Let's proceed in the following order:
+
+1. Divide your dataset into k number of folds at random (subsets)
+
+2 .Build your model using k - 1 folds of the dataset for each fold in your dataset. Then, test the model to see if it works for the     kth fold.
+
+3. Continue doing this until all k-folds have served as the test set.
+
+4. The cross-validation accuracy, which is defined as the average of your k recorded accuracy, will be used as your model's               performance metric.
+
+```{r}
+set.seed(42)
+churn_folds <- df_train %>% 
+  vfold_cv(v = 3, repeats = 1, strata = Exited) 
+churn_folds
+```
+
+The following is a glimpse of the split training set.
+
+```{r}
+churn_folds %>% purrr::pluck("splits", 1) %>% training()
+```
+
+## Modelling
+#### Data Preprocessing
+The following are pre-processing procedures that were undertaken on the data.
+
+##### Normalization
+Due to the varying scales of the numeric data, it was best to normalize it; reduce the data to range from 0 to 1.The process of    normalization is frequently used to prepare data for machine learning. The purpose of normalization is to convert the values of     the dataset's numeric columns to a common scale without distorting variations in the value ranges. Every dataset does not need to  be normalized for machine learning. Only when features have various ranges is it necessary. In this case variables like age,      EstimatedSalary, number of products, balance, tenure and age.
+
+##### Creating Dummies and One Hot Encoding
+Dummy variables are qualitative or discrete variables that represent category data and can have values of 0 or 1 to denote the absence or existence of a certain property, respectively. To increase prediction accuracy, one-hot encoding in machine learning involves transforming categorical data into a format that can be used by machine learning algorithms.
+With this method, a new column is made for each distinct value in the initial category column. These fake variables are then filled with zeros and ones (1 meaning TRUE, 0 meaning FALSE).
+This approach can result in a significant issue (too many predictors) if the original column contains a lot of unique values because it creates a lot of additional variables.One-hot encoding also has the drawback of increasing multicollinearity among the numerous variables, which reduces the model's accuracy.
+
+```{r}
+mod_recipe <- recipe(formula = Exited ~ ., data = df_train)
+mod_recipe <- mod_recipe %>% step_impute_median(Age)%>% 
+   step_normalize(c(Age, CreditScore, Tenure, Balance, NumOfProducts, EstimatedSalary)) %>% 
+    step_dummy(all_predictors(), -where(is.numeric), one_hot = T)
+mod_recipe <- mod_recipe %>% themis::step_upsample(Exited, over_ratio = 0.2, seed = 42, skip = T)
+
+churn_prep <- prep(mod_recipe)
+juiced <- juice(churn_prep)
+```
+
+#### Model training
+The machine learning approach in this case is supervised machine learning approach.  It is distinguished by the way it trains computers to accurately classify data or predict outcomes using labeled datasets. The model modifies its weights as input data is fed into it until the model has been properly fitted, which takes place as part of the cross validation process.
+A training set is used in supervised learning to instruct models to produce the desired results. This training dataset has both the right inputs and outputs, enabling the model to develop over time. The loss function serves as a gauge for the algorithm's correctness, and iterations are made until the error is sufficiently reduced.
+
+When using data mining, supervised learning may be divided into two sorts of issues: classification and regression. Classification is the approach in this case. In order to accurately classify test data into different categories, classification uses an algorithm. It identifies particular entities in the dataset and makes an effort to determine how those things should be defined or labeled. The classification techniques that we are training below are linear classifiers, support vector machines (SVM), decision trees, k-nearest neighbor, and random forests.
+
+The following models were trained on the data, and the best performing was set to be selected. The models selected for this study were:
+  1. Logistic Regression, 
+  2. Decision Trees, 
+  3. Support Vector Machines and  
+  4. Random Forest model.
+  5. kNN
+
+##### 1.Linear Classifiers (Logistic Regression)
+```{r}
+log_cls <- logistic_reg(penalty = tune(), mixture = 1) %>% 
+  set_engine("glm") %>% 
+  set_mode("classification")
+log_cls
+
+
+churn_fit_log <-
+  workflow(Exited ~ ., log_cls) %>% 
+  fit(data = df_train)
+
+churn_fit_log
+
+```
+
+```{r}
+augment(churn_fit_log, new_data = df_test) %>%
+  metrics(Exited, .pred_class)
+```
+
+###### Tuning Model
+```{r}
+set.seed(42)
+lr_mod <- 
+  logistic_reg(penalty = tune(), mixture = tune()) %>% 
+  set_engine("glmnet")
+
+tune_wf <- workflow() %>%
+  add_recipe(mod_recipe) %>%
+  add_model(lr_mod)
+
+doParallel::registerDoParallel()
+
+tune_res <- tune_grid(
+  tune_wf,
+  resamples = churn_folds,
+  grid = 20
+)
+
+tune_res %>%
+  collect_metrics()
+```
+The average accuracy of the logistic regression model did not change even after tuning the penalty and mixture parameters, the highest accuracy obtained is 81.28%.
+
+##### 2.K Nearest Neighbors
+```{r}
+knn_cls <- nearest_neighbor() %>%
+  set_mode("classification")
+knn_cls
+
+churn_fit_knn <-
+  workflow(Exited ~ ., knn_cls) %>% 
+  fit(data = df_train)
+
+churn_fit_knn 
+```
+
+```{r}
+augment(churn_fit_knn, new_data = df_test) %>%
+  metrics(Exited, .pred_class)
+```
+
+###### Tuning Model
+```{r}
+set.seed(42)
+knn_cls <- nearest_neighbor(neighbors = tune(), weight_func = tune(), dist_power = tune()) %>%
+  set_mode("classification")
+knn_cls
+
+tune_wf <- workflow() %>%
+  add_recipe(mod_recipe) %>%
+  add_model(knn_cls)
+
+doParallel::registerDoParallel()
+
+tune_res <- tune_grid(
+  tune_wf,
+  resamples = churn_folds,
+  grid = 2
+)
+
+tune_res %>%
+  collect_metrics()
+```
+
+The highest accuracy of the KNN model after tuning is 81.2%. All parameteres were tuned.
+
+##### 3. Decision Trees
+```{r}
+dt_cls <- decision_tree() %>% 
+  set_args(cost_complexity = 0.01, tree_depth = 30, min_n = 20) %>% 
+  set_mode("classification") %>% 
+  set_engine("rpart")
+dt_cls
+
+churn_fit_dt <-
+  workflow(Exited ~ ., dt_cls) %>% 
+  fit(data = df_train)
+
+churn_fit_dt
+
+```
+
+```{r}
+churn_fit_dt %>%
+  extract_fit_engine() %>%
+  rpart.plot(roundint = FALSE)
+```
+
+###### Model Performance
+```{r}
+augment(churn_fit_dt, new_data = df_test) %>%
+  metrics(Exited, .pred_class)
+```
+
+###### Tuning Model
+```{r}
+set.seed(42)
+dt_cls <- decision_tree(tree_depth = tune(), min_n = tune(), cost_complexity = tune()) %>%
+  set_engine("rpart") %>% 
+  set_mode("classification") %>% 
+  translate()
+dt_cls
+
+tune_wf <- workflow() %>%
+  add_recipe(mod_recipe) %>%
+  add_model(dt_cls)
+
+doParallel::registerDoParallel()
+
+tune_res <- tune_grid(
+  tune_wf,
+  resamples = churn_folds,
+  grid = 20
+)
+
+tune_res %>%
+  collect_metrics()
+```
+The highest accuracy of the model obtained from tuning was 85.3% .
+
+##### 4. Random Forest
+```{r}
+random_forest = rand_forest() %>% 
+  set_engine("randomForest") %>% 
+  set_mode("classification") %>% 
+  translate()
+churn_fit_rf =
+  workflow(Exited ~ ., random_forest) %>% 
+  fit(data = df_train)
+
+churn_fit_rf
+```
+
+```{r}
+augment(churn_fit_rf, new_data = df_test) %>%
+  metrics(Exited, .pred_class)
+```
+
+###### Tuning Model
+```{r}
+set.seed(42)
+rf_cls <- rand_forest(mtry = tune(), trees = tune(), min_n = tune()) %>%
+  set_engine("ranger") %>% 
+  set_mode("classification") %>% 
+  translate()
+
+tune_wf <- workflow() %>%
+  add_recipe(mod_recipe) %>%
+  add_model(rf_cls)
+
+doParallel::registerDoParallel()
+
+tune_res <- tune_grid(
+  tune_wf,
+  resamples = churn_folds,
+  grid = 2
+)
+
+tune_res %>%
+  collect_metrics()
+```
+The highest accuracy obtained after tuning the random forest model is 85.7%.
+
+##### 5. Support Vector Machine(SVM)
+
+```{r}
+SVM = svm_poly() %>% 
+  set_engine("kernlab") %>% 
+  set_mode("classification")
+
+churn_fit_SVM =
+  workflow(Exited ~ ., SVM) %>% 
+  fit(data = df_train)
+churn_fit_SVM
+
+```
+
+```{r}
+augment(churn_fit_SVM, new_data = df_test) %>%
+  metrics(Exited, .pred_class)
+```
+
+###### Tuning Model
+```{r}
+set.seed(42)
+svm_cls <- svm_rbf(cost = tune(), rbf_sigma = tune()) %>%
+  set_engine("kernlab") %>% 
+  set_mode("classification") %>% 
+  translate()
+
+tune_wf <- workflow() %>%
+  add_recipe(mod_recipe) %>%
+  add_model(svm_cls)
+
+doParallel::registerDoParallel()
+
+tune_res <- tune_grid(
+  tune_wf,
+  resamples = churn_folds,
+  grid = 2
+)
+
+tune_res %>%
+  collect_metrics()
+```
+The highest accuracy obtained by the Support Vector Machine Model after training is 81.84%. 
+
+##### Final Model (Random Forests)
+The highest performing model was the Random Forests model. We therefore fit it, train and tune it to get the best values of its parameters and then test on test data.
+
+```{r}
+set.seed(42)
+rf_cls <- rand_forest(mtry = tune(), trees = tune(), min_n = tune()) %>%
+  set_engine("ranger") %>% 
+  set_mode("classification") %>% 
+  translate()
+
+tune_wf <- workflow() %>%
+  add_recipe(mod_recipe) %>%
+  add_model(rf_cls)
+
+doParallel::registerDoParallel()
+
+tune_res <- tune_grid(
+  tune_wf,
+  resamples = churn_folds,
+  grid = 2
+)
+
+tune_res %>%
+  collect_metrics() %>%
+  filter(.metric == "roc_auc") %>%
+  select(mean, min_n, mtry, trees) %>%
+  pivot_longer(min_n:mtry:trees,
+    values_to = "value",
+    names_to = "parameter"
+  ) %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(show.legend = FALSE) +
+  facet_wrap(~parameter, scales = "free_x") +
+  labs(x = NULL, y = "AUC")
+```
+Although not all possible min n and mtry combinations were used in this grid, we can still make sense of what is happening. It appears that lower values of mtry (4 and 6) and values of min n are that are advantageous are (between 30 and 40). We can tune once more, this time using regular grid, to better understand the hyperparameters. Based on the outcomes of our initial tuning, let's establish ranges of hyperparameters we wish to test.
+
+The model is tuned again.
+```{r}
+rf_grid <- grid_regular(
+  trees(range =c(100, 400)),
+  mtry(c(4, 6)),
+  min_n(range = c(30, 40)),
+  levels = 2
+)
+
+rf_grid
+```
+
+```{r}
+set.seed(42)
+regularr_res <- tune_grid(
+  tune_wf,
+  resamples = churn_folds,
+  grid = 2)
+
+regular_res
+```
+
+
+
+Here are the results.
+
+```{r}
+regular_res %>%
+  collect_metrics() %>%
+  filter(.metric == "roc_auc") %>%
+  mutate(min_n = factor(min_n)) %>%
+  ggplot(aes(mtry, mean, color = min_n)) +
+  geom_line(alpha = 0.5, size = 1.5) +
+  geom_point() +
+  labs(y = "AUC")
+```
+
+```{r}
+best_auc <- select_best(regular_res, "roc_auc")
+final_rf <- finalize_model(rf_cls, best_auc)
+final_rf
+```
+
+The best model requires 1937 trees, 5 mtries and min_n OF 40.
+
+```{r}
+final_rf %>%
+  set_engine("ranger", importance = "permutation") %>%
+  fit(Exited ~ ., data = juice(churn_prep))  %>%
+  vip(geom = "point")
+
+```
+The  most factors that explain the clients exit are Age, Number of products, is active member and balance.
+
+```{r}
+final_wf <- workflow() %>%
+  add_recipe(mod_recipe) %>%
+  add_model(final_rf)
+
+final_res <- final_wf %>%
+  last_fit(df_split)
+
+final_res %>%
+  collect_metrics()
+```
+The model had an accuracy of 85.8%
+
+```{r}
+final_res %>%
+  collect_predictions() %>%
+  mutate(correct = case_when(
+    Exited == .pred_class ~ "Correct",
+    TRUE ~ "Incorrect"
+  )) %>%
+  bind_cols(df_test) %>%
+  ggplot(aes(Age, Balance, color = correct)) +
+  geom_point(size = 0.5, alpha = 0.5) +
+  labs(color = NULL) + theme_light()
+```
+Most of clients are aged between 30 and 50 years. 
+
+
+## Conclusion
+
+The purpose of this study was to come up with a model that could predict a customer’s exit. The following models were trained on the data, and the best performing was set to be selected. The models selected for this study were Logistic Regression,  K nearest neighbors,  Decision Trees, Support Vector Machines and Random Forest model. 
+These was a classification type of supervised machine learning. Simply defined, an unsupervised learning algorithm does not employ labeled input and output data. Supervised learning does. When using supervised learning, the algorithm iteratively predicts the data and modifies for the proper response in order to "learn" from the data that has been provided.
+The random forest model has the highest accuracy of the 4 models.  The model has an accuracy of 85.8%. after tuning.
+
